@@ -120,6 +120,7 @@ def chatbot_response(input_data: ChatRequest):
                 "Transportation_Cost": 1500,
                 "District": "Gampaha",
                 "City": "Mirigama"
+               
             }
 
             # Process input
