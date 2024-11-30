@@ -109,7 +109,7 @@ def chatbot_response(input_data: ChatRequest):
             # Example input for price prediction
             input_dict = {
                 "Date": "02/04/2025",
-                "Leaf_Type": "Maneru",
+                "Leaf_Type": "Maner",
                 "Leaf_Size": "Medium",
                 "Leaf_Condition": "Fresh",
                 "Quality_Grade": "High",
