@@ -23,4 +23,4 @@ except openai.error.AuthenticationError as e:
 except openai.error.OpenAIError as e:
     print("General OpenAI Error:", str(e))
 except Exception as e:
-    print("An unexpected error occurred - Check:", str(e))
+    print("An unexpected error occurred -- Check:", str(e))
