@@ -2,31 +2,22 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import pandas as pd
 import joblib
-from sklearn.preprocessing import LabelEncoder
 
 # Initialize FastAPI app
 app = FastAPI()
 
-# Load the saved model
-model_path = "./ML_Models/price/betal_price_prediction_model.pkl"  # Update the path as per your setup
-loaded_model = joblib.load(model_path)
+# Paths to the model, preprocessor, and encoders
+MODEL_PATH = "./ML_Models/price/betal_price_prediction_model.pkl"
+PREPROCESSOR_PATH = "./ML_Models/price/betel_preprocessing.pkl"
+ENCODER_PATH = "./ML_Models/price/betel_label_encoders.pkl"
 
-# Prepare label encoders for categorical columns
-categorical_columns = ['Leaf_Type', 'Leaf_Size', 'Quality_Grade', 'Location', 'Season']
-label_encoders = {col: LabelEncoder() for col in categorical_columns}
-
-# Manually set the encoders with the same mappings as during training
-leaf_type_classes = ['Peedichcha', 'Korikan', 'Keti', 'Raan Keti']
-leaf_size_classes = ['Small', 'Medium', 'Large']
-quality_grade_classes = ['Ash', 'Dark']
-location_classes = ['Kuliyapitiya', 'Naiwala', 'Apaladeniya']
-season_classes = ['Dry', 'Rainy']
-
-label_encoders['Leaf_Type'].fit(leaf_type_classes)
-label_encoders['Leaf_Size'].fit(leaf_size_classes)
-label_encoders['Quality_Grade'].fit(quality_grade_classes)
-label_encoders['Location'].fit(location_classes)
-label_encoders['Season'].fit(season_classes)
+# Load the model, preprocessor, and encoders
+try:
+    loaded_model = joblib.load(MODEL_PATH)
+    preprocessing_steps = joblib.load(PREPROCESSOR_PATH)  # Include any preprocessing logic, if needed
+    label_encoders = joblib.load(ENCODER_PATH)  # Encoders for categorical variables
+except Exception as e:
+    raise RuntimeError(f"Error loading resources: {str(e)}")
 
 # Input schema for price prediction
 class PricePredictionInput(BaseModel):
@@ -39,12 +30,12 @@ class PricePredictionInput(BaseModel):
     Season: str
 
 # Prediction function
-def predict_market_price_rounded(date, leaf_type, leaf_size, quality_grade, no_of_leaves, location, season):
+def predict_market_price(date, leaf_type, leaf_size, quality_grade, no_of_leaves, location, season):
     try:
         # Convert the date to a numeric month
         month = pd.to_datetime(date).month
 
-        # Encode categorical features
+        # Encode categorical features using the loaded encoders
         encoded_leaf_type = label_encoders['Leaf_Type'].transform([leaf_type])[0]
         encoded_leaf_size = label_encoders['Leaf_Size'].transform([leaf_size])[0]
         encoded_quality_grade = label_encoders['Quality_Grade'].transform([quality_grade])[0]
@@ -53,6 +44,10 @@ def predict_market_price_rounded(date, leaf_type, leaf_size, quality_grade, no_o
 
         # Prepare the feature vector
         features = [[month, encoded_leaf_type, encoded_leaf_size, encoded_quality_grade, no_of_leaves, encoded_location, encoded_season]]
+
+        # Apply any preprocessing steps if required (e.g., scaling, transformations)
+        if "scaler" in preprocessing_steps:
+            features = preprocessing_steps["scaler"].transform(features)
 
         # Predict the price per leaf
         predicted_price = loaded_model.predict(features)[0]
@@ -66,11 +61,21 @@ def predict_market_price_rounded(date, leaf_type, leaf_size, quality_grade, no_o
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error in prediction: {str(e)}")
 
+# Health Check Endpoint
+@app.get("/health")
+def health_check():
+    """Health check endpoint to ensure the API is running."""
+    return {"status": "API is up and running!"}
+
 # Price Prediction Endpoint
 @app.post("/predict-price")
 def predict_price(input_data: PricePredictionInput):
+    """
+    Predict the market price per leaf based on input features.
+    """
     try:
-        formatted_price = predict_market_price_rounded(
+        # Perform prediction
+        formatted_price = predict_market_price(
             date=input_data.Date,
             leaf_type=input_data.Leaf_Type,
             leaf_size=input_data.Leaf_Size,
@@ -80,10 +85,7 @@ def predict_price(input_data: PricePredictionInput):
             season=input_data.Season
         )
         return {"Predicted Market Price Per Leaf": formatted_price}
+    except HTTPException as e:
+        raise e  # Re-raise HTTP exceptions for clarity
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
-
-# Health Check Endpoint
-@app.get("/health")
-def health_check():
-    return {"status": "API is up and running!"}
