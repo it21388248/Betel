@@ -3,8 +3,39 @@ from pydantic import BaseModel
 import pandas as pd
 import joblib
 
+import firebase_admin
+from firebase_admin import credentials, firestore, auth
+
 # Initialize the FastAPI app
 app = FastAPI()
+
+# Path to your Firebase Admin SDK JSON file
+cred = credentials.Certificate("C:/Users/Kavindi/Downloads/betelapp-1d34b-firebase-adminsdk-z5vqk-1605baec1b.json")
+
+# Initialize the Firebase Admin SDK
+firebase_admin.initialize_app(cred)
+
+# Get Firestore client
+db = firestore.client()
+
+# Health check endpoint
+@app.get("/health")
+def health_check():
+    return {"status": "Server is up and running!"}
+
+# Sample Firestore Route
+@app.get("/")
+def index():
+    # Initialize a Firestore document reference
+    doc_ref = db.collection('test').document('sample')
+
+    # Add a sample document to Firestore
+    doc_ref.set({
+        'name': 'John Doe',
+        'role': 'Seller'
+    })
+
+    return {"message": "Document added!"}
 
 # Load models, preprocessors, and encoders
 demand_model = joblib.load('./ML_Models/demand/betel_demand_forecasting_model.pkl')
@@ -45,15 +76,11 @@ class PricePredictionInput(BaseModel):
     District: str
     City: str
 
-@app.get("/")
-def health_check():
-    return "Server is up and running!"
-
 @app.post("/predict-market-demand")
 def predict_market_demand(input_data: InputData):
     try:
         # Convert input data to DataFrame
-        input_df = pd.DataFrame([input_data.model_dump()])
+        input_df = pd.DataFrame([input_data.dict()])
 
         # Apply preprocessing
         encoded_input = demand_preprocessor.transform(input_df)
@@ -72,7 +99,7 @@ def predict_market_demand(input_data: InputData):
 def predict_price(input_data: PricePredictionInput):
     try:
         # Convert input data to dictionary
-        input_dict = input_data.model_dump()
+        input_dict = input_data.dict()
 
         # Extract Year, Month, and Day from the Date string
         input_dict['Year'] = int(input_dict['Date'].split('/')[2])
@@ -120,10 +147,8 @@ def chatbot_response(input_data: ChatRequest):
                 "Transportation_Cost": 1500,
                 "District": "Gampaha",
                 "City": "Mirigama"
-               
             }
 
-            # Process input
             input_dict['Year'] = int(input_dict['Date'].split('/')[2])
             input_dict['Month'] = int(input_dict['Date'].split('/')[1])
             input_dict['Day'] = int(input_dict['Date'].split('/')[0])
@@ -174,3 +199,4 @@ def chatbot_response(input_data: ChatRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
