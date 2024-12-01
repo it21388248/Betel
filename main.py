@@ -2,27 +2,40 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import pandas as pd
 import joblib
-
 import matplotlib.pyplot as plt
-import os
+import base64
+from io import BytesIO
 
 # Initialize FastAPI app
 app = FastAPI()
 
-# Paths to the model, preprocessor, and encoders
-MODEL_PATH = "./ML_Models/price/betal_price_prediction_model.pkl"
-PREPROCESSOR_PATH = "./ML_Models/price/betel_preprocessing.pkl"
-ENCODER_PATH = "./ML_Models/price/betel_label_encoders.pkl"
+# Paths to the models, preprocessors, and encoders
+PRICE_MODEL_PATH = "./ML_Models/price/betal_price_prediction_model.pkl"
+PRICE_ENCODER_PATH = "./ML_Models/price/betel_label_encoders.pkl"
+PRICE_PREPROCESSOR_PATH = "./ML_Models/price/betel_preprocessing.pkl"
 
+DEMAND_MODEL_PATH = "./ML_Models/demand/betel_location_prediction_model.pkl"
+DEMAND_ENCODER_PATH = "./ML_Models/demand/betel_label_encoders.pkl"
+DEMAND_PREPROCESSOR_PATH = "./ML_Models/demand/demand_preprocessor.pkl"
 
-
-# Load the model, preprocessor, and encoders
+# Load the price prediction model and encoders
 try:
-    loaded_model = joblib.load(MODEL_PATH)
-    preprocessing_steps = joblib.load(PREPROCESSOR_PATH)  # Include any preprocessing logic, if needed
-    label_encoders = joblib.load(ENCODER_PATH)  # Encoders for categorical variables
+    price_model = joblib.load(PRICE_MODEL_PATH)
+    price_encoders = joblib.load(PRICE_ENCODER_PATH)
+    price_preprocessor = joblib.load(PRICE_PREPROCESSOR_PATH)
 except Exception as e:
-    raise RuntimeError(f"Error loading resources: {str(e)}")
+    raise RuntimeError(f"Error loading price prediction resources: {str(e)}")
+
+# Load the demand prediction model and encoders
+try:
+    demand_model = joblib.load(DEMAND_MODEL_PATH)
+    demand_encoders = joblib.load(DEMAND_ENCODER_PATH)
+    demand_preprocessor = joblib.load(DEMAND_PREPROCESSOR_PATH)
+    demand_scaler = demand_preprocessor['scaler']
+    numeric_columns = demand_preprocessor['numeric_columns']
+except Exception as e:
+    raise RuntimeError(f"Error loading demand prediction resources: {str(e)}")
+
 
 # Input schema for price prediction
 class PricePredictionInput(BaseModel):
@@ -35,50 +48,73 @@ class PricePredictionInput(BaseModel):
     Season: str
 
 
+# Input schema for demand prediction
+class DemandPredictionInput(BaseModel):
+    Date: str
+    No_of_Leaves: int
+    Leaf_Type: str
+    Leaf_Size: str
+    Quality_Grade: str
 
 
-# Prediction function
-def predict_market_price(date, leaf_type, leaf_size, quality_grade, no_of_leaves, location, season):
+# Function to predict price per leaf
+def predict_price(date, leaf_type, leaf_size, quality_grade, no_of_leaves, location, season):
     try:
-        # Convert the date to a numeric month
+        # Convert the date to numeric month
         month = pd.to_datetime(date).month
 
-        # Encode categorical features using the loaded encoders
-        encoded_leaf_type = label_encoders['Leaf_Type'].transform([leaf_type])[0]
-        encoded_leaf_size = label_encoders['Leaf_Size'].transform([leaf_size])[0]
-        encoded_quality_grade = label_encoders['Quality_Grade'].transform([quality_grade])[0]
-        encoded_location = label_encoders['Location'].transform([location])[0]
-        encoded_season = label_encoders['Season'].transform([season])[0]
+        # Encode categorical features
+        encoded_leaf_type = price_encoders['Leaf_Type'].transform([leaf_type])[0]
+        encoded_leaf_size = price_encoders['Leaf_Size'].transform([leaf_size])[0]
+        encoded_quality_grade = price_encoders['Quality_Grade'].transform([quality_grade])[0]
+        encoded_location = price_encoders['Location'].transform([location])[0]
+        if 'Season' in price_encoders:
+            encoded_season = price_encoders['Season'].transform([season])[0]
+        else:
+            raise ValueError("Season encoder is missing or not used in the model.")
 
         # Prepare the feature vector
         features = [[month, encoded_leaf_type, encoded_leaf_size, encoded_quality_grade, no_of_leaves, encoded_location, encoded_season]]
 
-        # Apply any preprocessing steps if required (e.g., scaling, transformations)
-        if "scaler" in preprocessing_steps:
-            features = preprocessing_steps["scaler"].transform(features)
-
-        # Predict the price per leaf
-        predicted_price = loaded_model.predict(features)[0]
-
-        # Round the predicted price to the nearest 50 cents
+        # Predict the price
+        predicted_price = price_model.predict(features)[0]
         rounded_price = round(predicted_price * 2) / 2
-
-        # Format the rounded price to two decimal places
-        formatted_price = f"{rounded_price:.2f}"
-        return formatted_price
+        return f"{rounded_price:.2f}"
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error in prediction: {str(e)}")
-    
+        raise HTTPException(status_code=500, detail=f"Error in price prediction: {str(e)}")
 
-# Price Prediction Endpoint
-@app.post("/predict-price")
-def predict_price(input_data: PricePredictionInput):
-    """
-    Predict the market price per leaf based on input features.
-    """
+
+# Function to predict highest demand location
+def predict_demand_location(date, no_of_leaves, leaf_type, leaf_size, quality_grade):
     try:
-        # Perform prediction
-        formatted_price = predict_market_price(
+        # Convert the date to numeric month
+        month = pd.to_datetime(date).month
+
+        # Encode categorical features
+        encoded_leaf_type = demand_encoders['Leaf_Type'].transform([leaf_type])[0]
+        encoded_leaf_size = demand_encoders['Leaf_Size'].transform([leaf_size])[0]
+        encoded_quality_grade = demand_encoders['Quality_Grade'].transform([quality_grade])[0]
+
+        # Prepare the feature vector
+        features = pd.DataFrame([[month, no_of_leaves, encoded_leaf_type, encoded_leaf_size, encoded_quality_grade]],
+                                columns=['Month', 'No_of_Leaves', 'Leaf_Type', 'Leaf_Size', 'Quality_Grade'])
+
+        # Scale numeric features
+        features[numeric_columns] = demand_scaler.transform(features[numeric_columns])
+
+        # Predict location
+        location_encoded = demand_model.predict(features)[0]
+        location = demand_encoders['Location'].inverse_transform([location_encoded])[0]
+        return location
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in demand prediction: {str(e)}")
+
+
+# Endpoint: Predict price per leaf
+@app.post("/predict-price")
+def predict_price_endpoint(input_data: PricePredictionInput):
+    return {
+        "Predicted Market Price Per Leaf": predict_price(
             date=input_data.Date,
             leaf_type=input_data.Leaf_Type,
             leaf_size=input_data.Leaf_Size,
@@ -87,115 +123,24 @@ def predict_price(input_data: PricePredictionInput):
             location=input_data.Location,
             season=input_data.Season
         )
-        return {"Predicted Market Price Per Leaf": formatted_price}
-    except HTTPException as e:
-        raise e  # Re-raise HTTP exceptions for clarity
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
+    }
 
 
-# # ##############################################################################
-
-
-
-# Paths to the model, preprocessor, and encoders
-MODEL_PATH = "./ML_Models/demand/betel_location_prediction_model.pkl"
-PREPROCESSOR_PATH = "./ML_Models/demand/demand_preprocessor.pkl"
-ENCODER_PATH = "./ML_Models/demand/betel_label_encoders.pkl"
-
-
-# Load the model, preprocessor, and encoders
-try:
-    loaded_model = joblib.load(MODEL_PATH)
-    preprocessor = joblib.load(PREPROCESSOR_PATH)
-    label_encoders = joblib.load(ENCODER_PATH)
-except Exception as e:
-    raise RuntimeError(f"Error loading resources: {str(e)}")
-
-# Extract components from the preprocessor
-scaler = preprocessor['scaler']
-numeric_columns = preprocessor['numeric_columns']
-
-
-# Define the input schema for the prediction API
-class PredictionInput(BaseModel):
-    Date: str
-    No_of_Leaves: int
-    Leaf_Type: str
-    Leaf_Size: str
-    Quality_Grade: str
-
-
-
-# Prediction function
-def predict_highest_location(date, number_of_leaves, leaf_type, leaf_size, quality_grade):
-    try:
-        # Convert the date to a numeric month
-        month = pd.to_datetime(date).month
-
-        # Encode categorical features using the encoders
-        encoded_leaf_type = label_encoders['Leaf_Type'].transform([leaf_type])[0]
-        encoded_leaf_size = label_encoders['Leaf_Size'].transform([leaf_size])[0]
-        encoded_quality_grade = label_encoders['Quality_Grade'].transform([quality_grade])[0]
-
-        # Prepare the feature vector as a DataFrame
-        features = pd.DataFrame([[month, number_of_leaves, encoded_leaf_type, encoded_leaf_size, encoded_quality_grade]],
-                                columns=['Month', 'No_of_Leaves', 'Leaf_Type', 'Leaf_Size', 'Quality_Grade'])
-
-        # Scale numeric features using the preprocessor
-        features[numeric_columns] = scaler.transform(features[numeric_columns])
-
-        # Predict the highest location
-        predicted_location_encoded = loaded_model.predict(features)[0]
-        predicted_location = label_encoders['Location'].inverse_transform([predicted_location_encoded])[0]
-        return predicted_location
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error in prediction: {str(e)}")
-    
-
-
-
-
-
-# Prediction endpoint
+# Endpoint: Predict highest demand location
 @app.post("/predict-location")
-def predict_location(input_data: PredictionInput):
-    """
-    Predict the location with the highest demand for betel leaves.
-    """
-    try:
-        # Call the prediction function
-        predicted_location = predict_highest_location(
+def predict_location_endpoint(input_data: DemandPredictionInput):
+    return {
+        "Predicted Highest Demand Location": predict_demand_location(
             date=input_data.Date,
-            number_of_leaves=input_data.No_of_Leaves,
+            no_of_leaves=input_data.No_of_Leaves,
             leaf_type=input_data.Leaf_Type,
             leaf_size=input_data.Leaf_Size,
             quality_grade=input_data.Quality_Grade
         )
-        return {"Predicted Highest Demand Location": predicted_location}
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
+    }
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Health Check Endpoint
+# Health check endpoint
 @app.get("/health")
 def health_check():
-    """Health check endpoint to ensure the API is running."""
     return {"status": "API is up and running!"}
