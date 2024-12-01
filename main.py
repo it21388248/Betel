@@ -180,51 +180,7 @@ def predict_location(input_data: PredictionInput):
 
 
 
-@app.post("/generate-market-insight-chart")
-def generate_market_insight_chart(input_data: PricePredictionInput):
-    try:
-        # Generate predictions for a week
-        date_from = pd.to_datetime(input_data.Date)
-        date_to = date_from + pd.Timedelta(days=6)  # 7-day range
-        date_range = pd.date_range(start=date_from, end=date_to)
 
-        predictions = []
-        for date in date_range:
-            predicted_price = predict_market_price(
-                date=date.strftime('%Y-%m-%d'),
-                leaf_type=input_data.Leaf_Type,
-                leaf_size=input_data.Leaf_Size,
-                quality_grade=input_data.Quality_Grade,
-                no_of_leaves=input_data.No_of_Leaves,
-                location=input_data.Location,
-                season=input_data.Season
-            )
-            predictions.append({'Date': date.strftime('%Y-%m-%d'), 'Predicted Price': predicted_price})
-
-        # Convert predictions to a DataFrame
-        predicted_prices = pd.DataFrame(predictions)
-
-        # Generate the chart
-        plt.figure(figsize=(10, 6))
-        plt.plot(predicted_prices['Date'], predicted_prices['Predicted Price'], marker='o', linestyle='-', color='b')
-        plt.title('Market Insights: Predicted Price Over Time', fontsize=16)
-        plt.xlabel('Date', fontsize=12)
-        plt.ylabel('Predicted Price (Rounded)', fontsize=12)
-        plt.xticks(rotation=45)
-        plt.grid()
-        plt.tight_layout()
-
-        # Save the chart to a temporary file
-        chart_path = "market_insight_chart.png"
-        plt.savefig(chart_path)
-        plt.close()
-
-        # Serve the chart as a response
-        return FileResponse(chart_path, media_type="image/png", filename="market_insight_chart.png")
-
-    except Exception as e:
-        print(f"Error: {str(e)}")  # Log error details to the console
-        raise HTTPException(status_code=500, detail=f"Error generating market insight chart: {str(e)}")
 
 
 
